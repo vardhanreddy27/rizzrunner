@@ -1,78 +1,227 @@
-import Image from "next/image";
-import { Geist, Geist_Mono } from "next/font/google";
+'use client';
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+import {
+  memo,
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
+import * as THREE from 'three';
+import Mychar from '../components/Mychar';
+
+/** World scroll: +Z = ground flows toward camera; character runs forward (−Z) with Y rotation π */
+const SCROLL_UNITS_PER_SEC = 9;
+const LERP_PER_SEC = 14;
+const LANE_MIN = -12;
+const LANE_MAX = 12;
+const LANE_STEP = 5;
+const TILE_SPACING = 20;
+const TILE_WRAP = 40;
+
+const floorColors = ['#1a1a2e', '#2a2a3e', '#1a1a2e'];
+
+const Floor = memo(function Floor({ isQuizTime }) {
+  const a = useRef();
+  const b = useRef();
+  const c = useRef();
+  const geo = useMemo(() => new THREE.PlaneGeometry(20, 20), []);
+
+  useFrame((_, delta) => {
+    if (isQuizTime) return;
+    const refs = [a, b, c];
+    if (!refs.every((r) => r.current)) return;
+    const move = SCROLL_UNITS_PER_SEC * delta;
+    for (const r of refs) {
+      r.current.position.z += move;
+      if (r.current.position.z > TILE_WRAP) {
+        r.current.position.z = -TILE_WRAP;
+      }
+    }
+  });
+
+  const positions = useMemo(
+    () => [
+      [0, -0.5, 0],
+      [0, -0.5, TILE_SPACING],
+      [0, -0.5, -TILE_SPACING],
+    ],
+    []
+  );
+
+  return (
+    <>
+      {[a, b, c].map((ref, i) => (
+        <mesh
+          key={i}
+          ref={ref}
+          geometry={geo}
+          position={positions[i]}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
+          <meshBasicMaterial color={floorColors[i]} />
+        </mesh>
+      ))}
+    </>
+  );
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+const GameCharacter = memo(function GameCharacter({ targetXRef }) {
+  const groupRef = useRef();
+
+  useFrame((_, delta) => {
+    const g = groupRef.current;
+    if (!g) return;
+    const t = targetXRef.current;
+    const k = 1 - Math.exp(-LERP_PER_SEC * delta);
+    g.position.x += (t - g.position.x) * k;
+  });
+
+  return (
+    <group
+      ref={groupRef}
+      rotation={[0, Math.PI, 0]}
+      scale={[0.008, 0.008, 0.008]}
+    >
+      <Mychar />
+    </group>
+  );
 });
 
-export default function Home() {
+const QuizOverlay = memo(function QuizOverlay({ onAnswer }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-900/95 p-8 shadow-[0_24px_80px_rgba(0,0,0,0.55)]">
+        <p className="text-center text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">
+          Quiz checkpoint
+        </p>
+        <h2 className="mt-3 text-center text-2xl font-bold text-white sm:text-3xl">
+          What is the capital of Rizz?
+        </h2>
+        <p className="mt-2 text-center text-sm text-slate-400">
+          Tap an answer to continue your run.
+        </p>
+        <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {[
+            { label: 'Paris', ring: 'ring-rose-500/30 hover:bg-rose-500/10' },
+            { label: 'Charm', ring: 'ring-emerald-500/30 hover:bg-emerald-500/10' },
+            { label: 'Vibe', ring: 'ring-sky-500/30 hover:bg-sky-500/10' },
+            { label: 'Swag', ring: 'ring-amber-500/30 hover:bg-amber-500/10' },
+          ].map(({ label, ring }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={onAnswer}
+              className={`rounded-xl border border-white/10 bg-slate-800/80 px-4 py-4 text-left text-base font-semibold text-white ring-1 ${ring}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+export default function GamePage() {
+  const [isQuizTime, setIsQuizTime] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(7);
+  const targetXRef = useRef(0);
+  const touchStartRef = useRef(null);
+
+  useEffect(() => {
+    if (isQuizTime) return;
+    setTimeLeft(7);
+    const id = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t <= 1) {
+          clearInterval(id);
+          setIsQuizTime(true);
+          return 0;
+        }
+        return t - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isQuizTime]);
+
+  const handleTouchStart = useCallback((e) => {
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    touchStartRef.current = x;
+  }, []);
+
+  const handleTouchEnd = useCallback(
+    (e) => {
+      if (touchStartRef.current == null || isQuizTime) return;
+      const x = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+      const diff = x - touchStartRef.current;
+      const swipeThreshold = 20; // Minimum swipe distance - lowered for sensitivity
+
+      if (Math.abs(diff) > swipeThreshold) {
+        if (diff < 0) {
+          // Swipe left → move left (−X)
+          targetXRef.current = Math.max(
+            targetXRef.current - LANE_STEP,
+            LANE_MIN
+          );
+        } else {
+          // Swipe right → move right (+X)
+          targetXRef.current = Math.min(
+            targetXRef.current + LANE_STEP,
+            LANE_MAX
+          );
+        }
+      }
+
+      touchStartRef.current = null;
+    },
+    [isQuizTime]
+  );
+
+  const handleQuizAnswer = useCallback(() => {
+    setIsQuizTime(false);
+  }, []);
+
   return (
     <div
-      className={`${geistSans.className} ${geistMono.className} flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black`}
+      className="w-full h-screen bg-gradient-to-b from-sky-300 to-sky-100 relative cursor-pointer select-none"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onMouseDown={handleTouchStart}
+      onMouseUp={handleTouchEnd}
     >
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the index.js file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+      <Canvas
+        camera={{ position: [0, 3, 8], fov: 75 }}
+        style={{ width: '100%', height: '100%' }}
+        dpr={[1, 1.75]}
+        gl={{
+          powerPreference: 'high-performance',
+          antialias: true,
+          alpha: false,
+          stencil: false,
+          depth: true,
+        }}
+      >
+        <hemisphereLight color="#87ceeb" groundColor="#334155" intensity={0.85} />
+        <directionalLight position={[8, 10, 6]} intensity={1.1} />
+
+        <Floor isQuizTime={isQuizTime} />
+        <GameCharacter targetXRef={targetXRef} />
+      </Canvas>
+
+      {!isQuizTime && (
+        <div className="absolute top-6 left-6 bg-white/90 backdrop-blur-md rounded-full shadow-lg px-6 py-3 z-10 border-2 border-purple-500">
+          <p className="text-gray-900 font-black text-lg">⏱️ {timeLeft}s</p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs/pages/getting-started?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      )}
+
+      {isQuizTime && <QuizOverlay onAnswer={handleQuizAnswer} />}
+
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-black/70 backdrop-blur-md text-white rounded-full px-6 py-3 z-10 font-bold text-sm">
+        👈 Swipe left · Swipe right 👉
+      </div>
     </div>
   );
 }
