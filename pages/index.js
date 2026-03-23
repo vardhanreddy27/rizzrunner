@@ -15,7 +15,7 @@ import {
 } from 'three';
 import Mychar from '../components/Mychar';
 
-const LANE_X = [-2, 0, 2];
+const LANE_X = [-2.3, 0, 2.3];
 const RUNNER_Z = 2;
 const BASE_GAME_SPEED = 6;
 const QUIZ_DURATION = 7;
@@ -248,7 +248,9 @@ function GameScene({
     }
 
     if (cameraRef.current) {
-      cameraRef.current.lookAt(0, 0.45, -5.5);
+      const camTargetX = MathUtils.lerp(cameraRef.current.position.x, currentXRef.current * 0.38, 0.08);
+      cameraRef.current.position.x = camTargetX;
+      cameraRef.current.lookAt(currentXRef.current * 0.16, 0.5, -5.5);
     }
 
     // Keep collision checks active even while blocked so lane switch can resume running.
@@ -361,7 +363,7 @@ function GameScene({
 
   return (
     <>
-      <PerspectiveCamera ref={cameraRef} makeDefault position={[0, 3.5, 8]} fov={56} near={0.1} far={150} />
+      <PerspectiveCamera ref={cameraRef} makeDefault position={[0, 3.5, 8.8]} fov={60} near={0.1} far={180} />
 
       <Environment preset="city" />
       <ambientLight intensity={0.55} />
@@ -373,7 +375,7 @@ function GameScene({
         shadow-mapSize-height={1024}
       />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -20]} receiveShadow>
-        <planeGeometry args={[6, 50]} />
+        <planeGeometry args={[7.8, 50]} />
         <meshStandardMaterial map={roadTexture} color="#2f3238" roughness={0.95} metalness={0.08} />
       </mesh>
 
@@ -405,25 +407,47 @@ function GameScene({
 
       {quizCompletedCount >= 2 && (
         <group ref={finishRef} position={[0, 0, -220]}>
-          <mesh position={[0, 2.1, 0]} castShadow receiveShadow>
-            <boxGeometry args={[5.8, 2.4, 0.5]} />
-            <meshStandardMaterial color="#f8fafc" roughness={0.75} metalness={0.08} />
+          <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            <planeGeometry args={[8, 4.2]} />
+            <meshStandardMaterial color="#e2e8f0" roughness={0.92} metalness={0.04} />
           </mesh>
-          <mesh position={[0, 3.4, 0]} castShadow>
-            <boxGeometry args={[6.4, 0.8, 0.55]} />
-            <meshStandardMaterial color="#2563eb" emissive="#1d4ed8" emissiveIntensity={0.25} />
+
+          <mesh position={[0, 0.03, 1.7]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            <planeGeometry args={[8, 0.35]} />
+            <meshStandardMaterial color="#f8fafc" emissive="#f1f5f9" emissiveIntensity={0.08} />
           </mesh>
-          <mesh position={[0, 3.4, 0.31]}>
-            <planeGeometry args={[3.8, 0.5]} />
-            <meshStandardMaterial color="#dbeafe" emissive="#93c5fd" emissiveIntensity={0.15} />
+
+          <mesh position={[-2.9, 1.5, 0]} castShadow receiveShadow>
+            <boxGeometry args={[0.7, 3, 0.7]} />
+            <meshStandardMaterial color="#334155" roughness={0.7} metalness={0.15} />
           </mesh>
-          <mesh position={[-2.45, 1.2, 0]} castShadow>
-            <boxGeometry args={[0.4, 2.4, 0.4]} />
-            <meshStandardMaterial color="#334155" roughness={0.8} metalness={0.2} />
+          <mesh position={[2.9, 1.5, 0]} castShadow receiveShadow>
+            <boxGeometry args={[0.7, 3, 0.7]} />
+            <meshStandardMaterial color="#334155" roughness={0.7} metalness={0.15} />
           </mesh>
-          <mesh position={[2.45, 1.2, 0]} castShadow>
-            <boxGeometry args={[0.4, 2.4, 0.4]} />
-            <meshStandardMaterial color="#334155" roughness={0.8} metalness={0.2} />
+
+          <mesh position={[0, 3.2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[6.5, 0.8, 0.8]} />
+            <meshStandardMaterial color="#1d4ed8" emissive="#1e3a8a" emissiveIntensity={0.22} />
+          </mesh>
+
+          <mesh position={[0, 3.2, 0.41]}>
+            <planeGeometry args={[4.2, 0.42]} />
+            <meshStandardMaterial color="#dbeafe" emissive="#93c5fd" emissiveIntensity={0.18} />
+          </mesh>
+
+          <mesh position={[0, 1.45, -0.35]} castShadow receiveShadow>
+            <boxGeometry args={[4.2, 2.9, 0.45]} />
+            <meshStandardMaterial color="#f8fafc" roughness={0.78} metalness={0.08} />
+          </mesh>
+
+          <mesh position={[-4.2, 0.7, -0.1]} castShadow>
+            <cylinderGeometry args={[0.22, 0.3, 1.4, 12]} />
+            <meshStandardMaterial color="#16a34a" roughness={0.86} />
+          </mesh>
+          <mesh position={[4.2, 0.7, -0.1]} castShadow>
+            <cylinderGeometry args={[0.22, 0.3, 1.4, 12]} />
+            <meshStandardMaterial color="#16a34a" roughness={0.86} />
           </mesh>
         </group>
       )}
@@ -599,7 +623,8 @@ export default function Home() {
       const threshold = 24;
 
       if (Math.abs(dx) >= threshold) {
-        shiftLaneByDirection(dx < 0);
+        // Positive dx means finger moved right, negative means moved left.
+        shiftLaneByDirection(dx > 0);
       } else {
         const mid = window.innerWidth / 2;
         shiftLaneByDirection(e.clientX >= mid);
