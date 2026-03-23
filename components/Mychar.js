@@ -33,10 +33,10 @@ function Model(props) {
 
     const firstAction = actions[actionNames[0]];
     if (!firstAction) return;
-    firstAction.reset();
-    firstAction.loop = THREE.LoopRepeat;
-    firstAction.clampWhenFinished = false;
-    firstAction.play();
+    firstAction
+      .reset()
+      .setLoop(THREE.LoopRepeat, Infinity)
+      .play();
   }, [actions])
 
   return (
