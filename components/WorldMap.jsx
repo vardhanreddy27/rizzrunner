@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
 
+const MAP_WIDTH = 1125;
+const MAP_HEIGHT = 2436;
+
 const STAGES = [
   { id: 1, name: 'Stage 1', unlocked: true, x: 67.4, y: 93.4 },
   { id: 2, name: 'Stage 2', unlocked: false, x: 37.7, y: 85.1 },
@@ -29,9 +32,22 @@ function StageHotspot({ stage, index, ready, onPress }) {
       <button
         type="button"
         onClick={() => onPress(stage)}
-        className="relative h-[13vw] w-[13vw] max-h-[62px] max-w-[62px] min-h-[44px] min-w-[44px] rounded-full bg-transparent active:scale-95"
+        className="relative rounded-full bg-transparent active:scale-95"
+        style={{
+          width: 'clamp(44px, 11vw, 64px)',
+          height: 'clamp(44px, 11vw, 64px)',
+        }}
         aria-label={stage.name}
       >
+        {stage.unlocked && (
+          <span
+            className="pointer-events-none absolute inset-0 rounded-full"
+            style={{
+              boxShadow: '0 0 0 2px rgba(255,255,255,0.28), 0 0 20px rgba(34,197,94,0.42)',
+              animation: 'mapPulse 1.7s ease-in-out infinite',
+            }}
+          />
+        )}
         {!stage.unlocked && (
           <Image
             src="/lock.png"
@@ -60,14 +76,45 @@ export default function WorldMap({ onGameStart }) {
   };
 
   return (
-    <div className="relative h-screen w-full overflow-hidden bg-black">
-      <div className="relative h-full w-full overflow-hidden">
-        <Image src="/map.png" alt="World map" fill priority sizes="100vw" className="object-fill" />
+    <div className="relative h-screen w-full overflow-hidden bg-[#020617]">
+      <style jsx>{`
+        @keyframes mapPulse {
+          0%,
+          100% {
+            transform: scale(0.95);
+            opacity: 0.7;
+          }
+          50% {
+            transform: scale(1.05);
+            opacity: 1;
+          }
+        }
+      `}</style>
 
-        <div className="absolute inset-0">
-          {STAGES.map((stage, index) => (
-            <StageHotspot key={stage.id} stage={stage} index={index} ready={ready} onPress={handlePressStage} />
-          ))}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(15,118,110,0.28),rgba(2,6,23,0.9)_72%)]" />
+
+      <div className="relative flex h-full w-full items-center justify-center px-2">
+        <div
+          className="relative h-full max-h-screen overflow-hidden rounded-none"
+          style={{
+            aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}`,
+            width: `min(100vw, calc(100vh * ${MAP_WIDTH} / ${MAP_HEIGHT}))`,
+          }}
+        >
+          <Image
+            src="/map.png"
+            alt="World map"
+            fill
+            priority
+            sizes="(max-width: 768px) 100vw, 46vw"
+            className="object-cover"
+          />
+
+          <div className="absolute inset-0">
+            {STAGES.map((stage, index) => (
+              <StageHotspot key={stage.id} stage={stage} index={index} ready={ready} onPress={handlePressStage} />
+            ))}
+          </div>
         </div>
       </div>
     </div>

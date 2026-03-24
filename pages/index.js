@@ -1122,7 +1122,7 @@ export default function Home() {
   return (
     <div
       ref={rootRef}
-      className="relative h-screen w-full overflow-hidden bg-slate-900 touch-none select-none"
+      className="relative h-screen w-full overflow-hidden bg-linear-to-b from-slate-900 to-slate-950 touch-none select-none"
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
     >
@@ -1155,7 +1155,7 @@ export default function Home() {
       </Canvas>
 
       <div className="pointer-events-none absolute left-0 right-0 top-0 z-30 px-2 pt-[max(0.4rem,env(safe-area-inset-top))]">
-        <div className="mx-auto w-full max-w-3xl rounded-xl border border-white/10 bg-black/65 px-3 pb-2 pt-2 shadow-lg backdrop-blur-md">
+        <div className="w-full rounded-2xl border border-white/10 bg-black/58 px-3 pb-2.5 pt-2 shadow-[0_12px_24px_rgba(0,0,0,0.28)] backdrop-blur-md">
           <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-slate-200 sm:text-xs">
             <span>Energy</span>
             <span>{Math.ceil(energy)}%</span>
@@ -1188,7 +1188,7 @@ export default function Home() {
       <button
         type="button"
         onClick={() => setShowWorldMap(true)}
-        className="absolute left-3 top-[max(0.5rem,env(safe-area-inset-top))] z-40 rounded-lg border border-slate-400/50 bg-slate-900/80 px-3 py-1.5 text-xs font-bold tracking-wide text-slate-100 backdrop-blur-sm hover:border-cyan-400/70 hover:text-cyan-200"
+        className="absolute right-3 top-[max(0.5rem,env(safe-area-inset-top))] z-40 rounded-full border border-cyan-300/35 bg-slate-900/70 px-3 py-2 text-[11px] font-bold tracking-wide text-cyan-100 shadow-[0_8px_20px_rgba(8,47,73,0.35)] backdrop-blur-sm active:scale-95"
       >
         World Map
       </button>
