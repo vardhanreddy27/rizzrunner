@@ -5,7 +5,7 @@ const MAP_WIDTH = 1125;
 const MAP_HEIGHT = 2436;
 
 const STAGES = [
-  { id: 1, name: 'Stage 1', unlocked: true, x: 67.4, y: 93.4 },
+  { id: 1, name: 'Stage 1', unlocked: true, x: 67.4, y: 92.5 },
   { id: 2, name: 'Stage 2', unlocked: false, x: 37.7, y: 85.1 },
   { id: 3, name: 'Stage 3', unlocked: false, x: 25.4, y: 71.7 },
   { id: 4, name: 'Stage 4', unlocked: false, x: 52.7, y: 56.8 },
@@ -76,7 +76,7 @@ export default function WorldMap({ onGameStart }) {
   };
 
   return (
-    <div className="relative h-screen w-full overflow-hidden bg-[#020617]">
+    <div className="fixed inset-0 overflow-hidden bg-[#9dcc35]">
       <style jsx>{`
         @keyframes mapPulse {
           0%,
@@ -91,11 +91,9 @@ export default function WorldMap({ onGameStart }) {
         }
       `}</style>
 
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(15,118,110,0.28),rgba(2,6,23,0.9)_72%)]" />
-
       <div className="relative flex h-full w-full items-center justify-center">
         <div
-          className="relative overflow-hidden rounded-none"
+          className="relative overflow-hidden"
           style={{
             aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}`,
             width: `min(100vw, calc(100dvh * ${MAP_WIDTH} / ${MAP_HEIGHT}))`,
