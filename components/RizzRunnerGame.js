@@ -8,10 +8,11 @@ import {
   useCallback,
   Suspense,
 } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 import Mychar from './Mychar';
+import CompanionPlayer from './CompanionPlayer';
 
 useGLTF.preload('/FastRun.glb');
 
@@ -26,10 +27,15 @@ const WRAP_MAX_Z = TILE_LEN;
 const WRAP_RESET_Z = -3 * TILE_LEN;
 const TILE_BASES = [-3 * TILE_LEN, -2 * TILE_LEN, -TILE_LEN, 0];
 
-const CAM_POS = [0, 3.45, 11.2];
+const CAM_POS_Y = 3.45;
+const CAM_POS_X = 0;
+const CAM_Z_OFFSET = 11.2;
 const CAM_FOV = 62;
 
 const FINISH_DISTANCE = 260;
+
+// Companion lane positions (fixed) - 3 companions
+const COMPANION_LANES = [-5, 0, 5];
 
 const ASPHALT = ['#2f3542', '#343b4a', '#2f3542', '#323948'];
 
@@ -192,6 +198,29 @@ function CharacterFallback() {
     </group>
   );
 }
+
+// Dynamic camera that follows the main player
+const CameraController = memo(function CameraController({ scrollRef, targetXRef }) {
+  const { camera } = useThree();
+
+  useFrame(() => {
+    if (!camera) return;
+
+    // Camera follows player's scroll progress (Z-axis)
+    const cameraZ = scrollRef.current + CAM_Z_OFFSET;
+
+    // Smooth camera X following (player horizontal position influence, but dampened)
+    const targetCamX = targetXRef.current * 0.15; // Slightly follow player's lane
+    camera.position.x += (targetCamX - camera.position.x) * 0.08;
+    camera.position.y = CAM_POS_Y;
+    camera.position.z = cameraZ;
+
+    // Look ahead of player
+    camera.lookAt(targetCamX, -0.15, cameraZ - 18);
+  });
+
+  return null;
+});
 
 const OBSTACLES = [
   { x: -2.5, z0: -24, w: 1.3, h: 1.05, d: 1.1 },
@@ -363,14 +392,13 @@ export default function RizzRunnerGame() {
       <Canvas
         className="block min-h-0 flex-1"
         camera={{
-          position: CAM_POS,
+          position: [CAM_POS_X, CAM_POS_Y, CAM_Z_OFFSET],
           fov: CAM_FOV,
           near: 0.1,
           far: 200,
         }}
         style={{ width: '100%', height: '100%' }}
-        onCreated={({ scene, camera }) => {
-          camera.lookAt(0, -0.15, -18);
+        onCreated={({ scene }) => {
           scene.fog = new THREE.Fog('#7ba3c9', 18, 110);
         }}
         dpr={[1, 2]}
@@ -411,13 +439,26 @@ export default function RizzRunnerGame() {
 
         <Suspense fallback={<CharacterFallback />}>
           <GameCharacter targetXRef={targetXRef} playerXRef={playerXRef} />
+          {COMPANION_LANES.map((lane, idx) => (
+            <CompanionPlayer
+              key={`companion-${idx}`}
+              initialLane={lane}
+              scrollRef={scrollRef}
+              pausedRef={pausedRef}
+              obstaclesData={OBSTACLES}
+            />
+          ))}
         </Suspense>
+
+        <CameraController scrollRef={scrollRef} targetXRef={targetXRef} />
       </Canvas>
 
       {finished && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))]">
-          <div className="rounded-full border border-emerald-300/70 bg-emerald-950/80 px-5 py-2.5 text-sm font-bold text-emerald-100 shadow-lg backdrop-blur-md">
-            Finish reached: School gate
+        <div className="pointer-events-none fixed inset-0 z-20 flex items-center justify-center bg-black/40">
+          <div className="rounded-2xl border-4 border-emerald-400 bg-gradient-to-br from-emerald-900 to-emerald-950 px-8 py-6 text-center shadow-2xl">
+            <div className="text-5xl font-bold text-emerald-300 mb-3">🎉 Success! 🎉</div>
+            <div className="text-2xl font-bold text-emerald-100 mb-2">You Made It!</div>
+            <div className="text-lg text-emerald-200">Reached School Gate</div>
           </div>
         </div>
       )}

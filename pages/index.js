@@ -5,6 +5,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { ContactShadows, PerspectiveCamera, useGLTF } from '@react-three/drei';
 import {
   Box3,
+  DefaultLoadingManager,
   DoubleSide,
   MathUtils,
   BoxGeometry,
@@ -13,21 +14,29 @@ import {
   Vector3,
 } from 'three';
 import Mychar from '../components/Mychar';
+import WorldMap from '../components/WorldMap';
 
 const LANE_X = [-2.3, 0, 2.3];
 const RUNNER_Z = 2;
 const RUNNER_Y = 0.08;
 const BASE_GAME_SPEED = 6;
 const QUIZ_DURATION = 7;
-const ENABLE_QUIZ = false;
+const ENABLE_QUIZ = true;
 const ENERGY_DRAIN_DELAY = 6;
 const ROAD_SEGMENT_LENGTH = 55;
 const ROAD_WRAP_START = 35;
 const ROAD_SEGMENT_COUNT = 3;
 const COIN_OBSTACLE_SAFE_GAP = 12;
 const COIN_COIN_SAFE_GAP = 6;
+const QUIZ_QUESTIONS_PER_CHECKPOINT = 3;
+const QUIZ_CHECKPOINTS_REQUIRED = 2;
+const TOTAL_QUIZ_QUESTIONS = QUIZ_QUESTIONS_PER_CHECKPOINT * QUIZ_CHECKPOINTS_REQUIRED;
 
-const questionBank = [
+function shuffleList(items) {
+  return [...items].sort(() => Math.random() - 0.5);
+}
+
+const FALLBACK_QUESTION_BANK = [
   {
     question: 'What is 2 + 2?',
     options: ['3', '4', '5', '6'],
@@ -185,9 +194,144 @@ function CharacterFallback() {
   );
 }
 
+function laneIndexToX(value) {
+  if (value <= 1) return MathUtils.lerp(LANE_X[0], LANE_X[1], value);
+  return MathUtils.lerp(LANE_X[1], LANE_X[2], value - 1);
+}
+
+function DummyRunner({ initialLane, speedFactor, swayPhase, startOffset = 0, obstacles }) {
+  const rootRef = useRef(null);
+  const visualRef = useRef(null);
+  const normalizedRef = useRef(false);
+  const zRef = useRef(RUNNER_Z + startOffset);
+  const laneRef = useRef(initialLane);
+  const targetLaneRef = useRef(initialLane);
+  const laneDecisionTimerRef = useRef(0.8 + (swayPhase % 1) * 0.9);
+
+  const normalizeDummy = useCallback(() => {
+    const root = visualRef.current;
+    if (!root || normalizedRef.current) return;
+
+    root.traverse((obj) => {
+      if (!obj.isMesh || !obj.material) return;
+      obj.castShadow = false;
+      obj.receiveShadow = false;
+      obj.frustumCulled = false;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach((mat) => {
+        mat.transparent = false;
+        mat.opacity = 1;
+        mat.side = DoubleSide;
+        mat.depthWrite = true;
+        mat.needsUpdate = true;
+      });
+    });
+
+    const box = new Box3().setFromObject(root);
+    const size = new Vector3();
+    const center = new Vector3();
+    box.getSize(size);
+    box.getCenter(center);
+
+    if (size.y > 0.0001) {
+      const targetHeight = 1.48;
+      const s = targetHeight / size.y;
+      root.scale.setScalar(s);
+      root.position.set(-center.x * s, -box.min.y * s + 0.02, -center.z * s);
+      normalizedRef.current = true;
+    }
+  }, []);
+
+  useFrame(({ clock }, delta) => {
+    const g = rootRef.current;
+    if (!g) return;
+
+    normalizeDummy();
+
+    const t = clock.getElapsedTime();
+    zRef.current += (speedFactor - 1) * BASE_GAME_SPEED * 0.7 * delta;
+    if (zRef.current > 5.5) zRef.current = -9.5;
+    if (zRef.current < -11.5) zRef.current = 4.2;
+
+    laneDecisionTimerRef.current -= delta;
+
+    const obstacleNearLane = (laneIndex, z, range = 2.8) =>
+      obstacles.some((o) => o.lane === laneIndex && Math.abs(o.z - z) <= range);
+
+    const currentLaneIndex = Math.round(Math.max(0, Math.min(2, laneRef.current)));
+    const dangerAhead = obstacleNearLane(currentLaneIndex, zRef.current + 1.0, 2.8);
+
+    if (dangerAhead || laneDecisionTimerRef.current <= 0) {
+      const lanes = [0, 1, 2];
+      const safeLanes = lanes.filter((l) => !obstacleNearLane(l, zRef.current + 0.6, 2.6));
+      const pool = safeLanes.length > 0 ? safeLanes : lanes;
+
+      const currentTarget = Math.round(targetLaneRef.current);
+      const alternativePool = pool.filter((l) => l !== currentTarget);
+      const finalPool = alternativePool.length > 0 ? alternativePool : pool;
+
+      targetLaneRef.current = finalPool[Math.floor(Math.random() * finalPool.length)];
+      laneDecisionTimerRef.current = 0.7 + Math.random() * 1.4;
+    }
+
+    laneRef.current = MathUtils.lerp(laneRef.current, targetLaneRef.current, Math.min(1, delta * 4));
+
+    // Keep dummy runners from ever touching barriers, including during lane interpolation.
+    let nearestBarrierZ = Infinity;
+    for (let i = 0; i < obstacles.length; i += 1) {
+      const o = obstacles[i];
+      const laneProximity = Math.abs(laneRef.current - o.lane);
+      if (laneProximity > 0.42) continue;
+      if (o.z < zRef.current - 1.4) continue;
+      if (o.z < nearestBarrierZ) nearestBarrierZ = o.z;
+    }
+
+    if (nearestBarrierZ !== Infinity && zRef.current > nearestBarrierZ - 1.15) {
+      zRef.current = nearestBarrierZ - 1.15;
+
+      const lanes = [0, 1, 2];
+      const safeLanes = lanes.filter((l) => !obstacleNearLane(l, zRef.current + 0.8, 2.8));
+      const currentTarget = Math.round(targetLaneRef.current);
+      const alternatives = safeLanes.filter((l) => l !== currentTarget);
+      if (alternatives.length > 0) {
+        targetLaneRef.current = alternatives[Math.floor(Math.random() * alternatives.length)];
+      }
+
+      if (laneDecisionTimerRef.current > 0.1) {
+        laneDecisionTimerRef.current = 0.1;
+      }
+    }
+
+    g.position.x = laneIndexToX(laneRef.current) + Math.sin(t * 1.5 + swayPhase) * 0.07;
+    g.position.y = RUNNER_Y + Math.sin(t * 4 + swayPhase) * 0.01;
+    g.position.z = zRef.current;
+  });
+
+  return (
+    <group ref={rootRef} rotation={[0, 0, 0]}>
+      <Suspense fallback={<CharacterFallback />}>
+        <group ref={visualRef} rotation={[0, Math.PI, 0]}>
+          <Mychar />
+        </group>
+      </Suspense>
+    </group>
+  );
+}
+
+function DummyPlayers({ obstacles }) {
+  return (
+    <>
+      <DummyRunner initialLane={0} speedFactor={0.74} swayPhase={0} startOffset={-1.2} obstacles={obstacles} />
+      <DummyRunner initialLane={1} speedFactor={0.8} swayPhase={0.9} startOffset={0.8} obstacles={obstacles} />
+      <DummyRunner initialLane={2} speedFactor={0.86} swayPhase={1.7} startOffset={-0.4} obstacles={obstacles} />
+    </>
+  );
+}
+
 useGLTF.preload('/unreal_engine_4_sky.glb');
 useGLTF.preload('/stylized_coin.glb');
 useGLTF.preload('/realistic_road_barrier.glb');
+useGLTF.preload('/FastRun.glb');
 
 function GameScene({
   currentLane,
@@ -523,6 +667,8 @@ function GameScene({
 
       <ContactShadows position={[0, 0.05, RUNNER_Z]} opacity={0.45} scale={10} blur={2.3} far={9} />
 
+      <DummyPlayers obstacles={obstacles} />
+
       <group ref={characterRootRef} position={[LANE_X[currentLane], RUNNER_Y, RUNNER_Z]} rotation={[0, 0, 0]}>
         <Suspense fallback={<CharacterFallback />}>
           <group ref={characterVisualRef} rotation={[0, Math.PI, 0]}>
@@ -547,6 +693,15 @@ function GameScene({
 }
 
 export default function Home() {
+  const [isBootLoading, setIsBootLoading] = useState(true);
+  const [bootProgress, setBootProgress] = useState(0);
+  const [bootMessage, setBootMessage] = useState('Loading game assets...');
+  const [questionBank, setQuestionBank] = useState(FALLBACK_QUESTION_BANK);
+  const [remainingQuestions, setRemainingQuestions] = useState([]);
+  const [questionSource, setQuestionSource] = useState('fallback');
+  const [showWorldMap, setShowWorldMap] = useState(true);
+  const [selectedStage, setSelectedStage] = useState(null);
+
   const [currentLane, setCurrentLane] = useState(1);
   const [targetX, setTargetX] = useState(0);
 
@@ -556,7 +711,7 @@ export default function Home() {
   const [isBlocked, setIsBlocked] = useState(false);
   const [hasFinished, setHasFinished] = useState(false);
   const [quizCompletedCount, setQuizCompletedCount] = useState(0);
-  const [requiredQuizCount, setRequiredQuizCount] = useState(ENABLE_QUIZ ? 2 : 0);
+  const [requiredQuizCount, setRequiredQuizCount] = useState(ENABLE_QUIZ ? QUIZ_CHECKPOINTS_REQUIRED : 0);
 
   const [energy, setEnergy] = useState(100);
   const [score, setScore] = useState(0);
@@ -565,12 +720,9 @@ export default function Home() {
   const [quizRound, setQuizRound] = useState([]);
   const [quizIndex, setQuizIndex] = useState(0);
   const [quizCorrectCount, setQuizCorrectCount] = useState(0);
+  const [totalCorrectCount, setTotalCorrectCount] = useState(0);
   const [quizAnswered, setQuizAnswered] = useState(false);
   const [selectedAnswer, setSelectedAnswer] = useState('');
-  const [quizFeedback, setQuizFeedback] = useState('');
-  const [quizWasCorrect, setQuizWasCorrect] = useState(false);
-  const [showConfetti, setShowConfetti] = useState(false);
-  const [confettiKey, setConfettiKey] = useState(0);
 
   const [obstacles, setObstacles] = useState([]);
   const [coins, setCoins] = useState([]);
@@ -580,8 +732,82 @@ export default function Home() {
   const rootRef = useRef(null);
   const swipeStartXRef = useRef(null);
   const quizCorrectRef = useRef(0);
+  const totalCorrectRef = useRef(0);
   const obstacleStateRef = useRef(obstacles);
   const coinStateRef = useRef(coins);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadQuestions = async () => {
+      try {
+        const res = await fetch('/api/game-questions');
+        if (!res.ok) return { questions: FALLBACK_QUESTION_BANK, source: 'fallback' };
+        const payload = await res.json();
+        if (!payload?.questions || payload.questions.length < QUIZ_QUESTIONS_PER_CHECKPOINT) {
+          return { questions: FALLBACK_QUESTION_BANK, source: 'fallback' };
+        }
+        return {
+          questions: payload.questions,
+          source: payload.source || 'db',
+        };
+      } catch {
+        return { questions: FALLBACK_QUESTION_BANK, source: 'fallback' };
+      }
+    };
+
+    const runBoot = async () => {
+      try {
+        setBootProgress(20);
+        setBootMessage('Fetching quiz questions...');
+        const questionPayload = await loadQuestions();
+        if (mounted) {
+          setQuestionBank(questionPayload.questions);
+          setQuestionSource(questionPayload.source);
+        }
+
+        setBootProgress(55);
+        setBootMessage('Finalizing game startup...');
+
+        const loadingDone = new Promise((resolve) => {
+          const prevOnLoad = DefaultLoadingManager.onLoad;
+          const prevOnProgress = DefaultLoadingManager.onProgress;
+
+          DefaultLoadingManager.onProgress = (_, loaded, total) => {
+            if (!mounted || total <= 0) return;
+            const pct = Math.min(95, Math.max(55, Math.floor((loaded / total) * 95)));
+            setBootProgress(pct);
+          };
+
+          DefaultLoadingManager.onLoad = () => {
+            if (!mounted) return;
+            setBootProgress(100);
+            DefaultLoadingManager.onLoad = prevOnLoad;
+            DefaultLoadingManager.onProgress = prevOnProgress;
+            resolve();
+          };
+
+          // If assets are already loaded, don't block boot.
+          window.setTimeout(resolve, 700);
+        });
+
+        await loadingDone;
+      } finally {
+        if (mounted) {
+          window.setTimeout(() => {
+            if (!mounted) return;
+            setIsBootLoading(false);
+          }, 250);
+        }
+      }
+    };
+
+    runBoot();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     obstacleStateRef.current = obstacles;
@@ -590,6 +816,11 @@ export default function Home() {
   useEffect(() => {
     coinStateRef.current = coins;
   }, [coins]);
+
+  useEffect(() => {
+    const initialPool = shuffleList(questionBank).slice(0, Math.min(TOTAL_QUIZ_QUESTIONS, questionBank.length));
+    setRemainingQuestions(initialPool);
+  }, [questionBank]);
 
   useEffect(() => {
     setTargetX(LANE_X[currentLane]);
@@ -684,19 +915,25 @@ export default function Home() {
   useEffect(() => {
     if (!ENABLE_QUIZ) return;
     if (!isQuizOpen) return;
-    const pool = [...questionBank]
-      .sort(() => Math.random() - 0.5)
-      .slice(0, Math.min(3, questionBank.length));
-    setQuizRound(pool);
-    setQuizIndex(0);
-    setQuizCorrectCount(0);
-    quizCorrectRef.current = 0;
-    setQuizAnswered(false);
-    setSelectedAnswer('');
-    setQuizFeedback('');
-    setQuizWasCorrect(false);
-    setShowConfetti(false);
-  }, [isQuizOpen]);
+    setRemainingQuestions((prev) => {
+      let source = prev;
+      if (source.length === 0) {
+        source = shuffleList(questionBank).slice(0, Math.min(TOTAL_QUIZ_QUESTIONS, questionBank.length));
+      }
+
+      const nextRound = source.slice(0, QUIZ_QUESTIONS_PER_CHECKPOINT);
+      const left = source.slice(nextRound.length);
+
+      setQuizRound(nextRound);
+      setQuizIndex(0);
+      setQuizCorrectCount(0);
+      quizCorrectRef.current = 0;
+      setQuizAnswered(false);
+      setSelectedAnswer('');
+
+      return left;
+    });
+  }, [isQuizOpen, questionBank]);
 
   const shiftLaneByDirection = useCallback((goRight) => {
     if (goRight) {
@@ -732,7 +969,7 @@ export default function Home() {
     [isGameOver, isQuizOpen, hasFinished, shiftLaneByDirection]
   );
 
-  const restartGame = useCallback(() => {
+  const resetRunState = useCallback(() => {
     setCurrentLane(1);
     setTargetX(0);
     setGameSpeed(BASE_GAME_SPEED);
@@ -741,7 +978,7 @@ export default function Home() {
     setIsBlocked(false);
     setHasFinished(false);
     setQuizCompletedCount(0);
-    setRequiredQuizCount(ENABLE_QUIZ ? 2 : 0);
+    setRequiredQuizCount(ENABLE_QUIZ ? QUIZ_CHECKPOINTS_REQUIRED : 0);
     setEnergy(100);
     setScore(0);
     setDistance(0);
@@ -751,17 +988,30 @@ export default function Home() {
     obstacleIdRef.current = 1;
     coinIdRef.current = 1;
     setQuizRound([]);
+    setRemainingQuestions(shuffleList(questionBank).slice(0, Math.min(TOTAL_QUIZ_QUESTIONS, questionBank.length)));
     setQuizIndex(0);
     setQuizCorrectCount(0);
+    setTotalCorrectCount(0);
     quizCorrectRef.current = 0;
+    totalCorrectRef.current = 0;
     setQuizAnswered(false);
     setSelectedAnswer('');
-    setQuizFeedback('');
-    setQuizWasCorrect(false);
-    setShowConfetti(false);
-  }, []);
+  }, [questionBank]);
 
-  const activeQuestion = quizRound[quizIndex] || questionBank[0];
+  const handleStartFromMap = useCallback(
+    (stageId, stageName) => {
+      setSelectedStage({ id: stageId, name: stageName });
+      resetRunState();
+      setShowWorldMap(false);
+    },
+    [resetRunState]
+  );
+
+  const restartGame = useCallback(() => {
+    resetRunState();
+  }, [resetRunState]);
+
+  const activeQuestion = quizRound[quizIndex] || questionBank[0] || FALLBACK_QUESTION_BANK[0];
 
   const onAnswerQuiz = (picked) => {
     if (quizAnswered || !activeQuestion) return;
@@ -769,7 +1019,6 @@ export default function Home() {
     const isCorrect = picked === activeQuestion.correctAnswer;
     setQuizAnswered(true);
     setSelectedAnswer(picked);
-    setQuizWasCorrect(isCorrect);
 
     if (isCorrect) {
       setQuizCorrectCount((v) => {
@@ -777,31 +1026,19 @@ export default function Home() {
         quizCorrectRef.current = nv;
         return nv;
       });
-      setQuizFeedback('Correct! Great job.');
-      setConfettiKey((k) => k + 1);
-      setShowConfetti(true);
-    } else {
-      quizCorrectRef.current = quizCorrectCount;
-      setQuizFeedback(
-        `Wrong answer. Correct answer: ${activeQuestion.correctAnswer}. ${activeQuestion.explanation}`
-      );
-      setShowConfetti(false);
+
+      setTotalCorrectCount((v) => {
+        const nv = v + 1;
+        totalCorrectRef.current = nv;
+        return nv;
+      });
     }
   };
 
   const handleLowEnergy = useCallback(() => {
-    if (!ENABLE_QUIZ) {
-      // In run-only mode, recover energy with a small score penalty.
-      setScore((s) => Math.max(0, s - 10));
-      setEnergy(35);
-      return;
-    }
-
-    // Keep run alive at 0 energy: apply penalty and require one extra quiz checkpoint.
-    setScore((s) => Math.max(0, s - 15));
-    setRequiredQuizCount((v) => Math.min(5, v + 1));
-    setIsQuizOpen(true);
-    setQuizTime(QUIZ_DURATION);
+    // Keep a fixed 6-question flow: low energy recovery should not open extra quizzes.
+    setScore((s) => Math.max(0, s - 10));
+    setEnergy(35);
   }, []);
 
   useEffect(() => {
@@ -809,13 +1046,10 @@ export default function Home() {
     if (!isQuizOpen || !quizAnswered) return;
 
     const timer = window.setTimeout(() => {
-      if (quizIndex < 2 && quizIndex < quizRound.length - 1) {
+      if (quizIndex < QUIZ_QUESTIONS_PER_CHECKPOINT - 1 && quizIndex < quizRound.length - 1) {
         setQuizIndex((i) => i + 1);
         setQuizAnswered(false);
         setSelectedAnswer('');
-        setQuizFeedback('');
-        setQuizWasCorrect(false);
-        setShowConfetti(false);
         return;
       }
 
@@ -832,13 +1066,58 @@ export default function Home() {
       setGameSpeed(BASE_GAME_SPEED);
       setQuizAnswered(false);
       setSelectedAnswer('');
-      setQuizFeedback('');
-      setQuizWasCorrect(false);
-      setShowConfetti(false);
-    }, quizWasCorrect ? 700 : 1300);
+    }, 650);
 
     return () => window.clearTimeout(timer);
-  }, [isQuizOpen, quizAnswered, quizIndex, quizRound.length, quizWasCorrect]);
+  }, [isQuizOpen, quizAnswered, quizIndex, quizRound.length]);
+
+  const userLeaderboardRank = useMemo(() => {
+    const correct = Math.min(TOTAL_QUIZ_QUESTIONS, totalCorrectRef.current || totalCorrectCount);
+    if (correct >= 6) return 1;
+    if (correct === 5) return 2;
+    if (correct === 4) return 3;
+    if (correct === 3) return 4;
+    if (correct === 2) return 5;
+    return 6;
+  }, [totalCorrectCount]);
+
+  const leaderboardRows = useMemo(() => {
+    const names = ['Nova', 'RiderX', 'Ayaan', 'Skye', 'Bolt', 'Milo', 'Veda', 'Zara'];
+    const shuffled = [...names].sort(() => Math.random() - 0.5);
+    const rows = [];
+    const userCorrect = Math.min(TOTAL_QUIZ_QUESTIONS, totalCorrectRef.current || totalCorrectCount);
+
+    for (let rank = 1; rank <= 8; rank += 1) {
+      if (rank === userLeaderboardRank) {
+        rows.push({
+          rank,
+          name: 'You',
+          correct: userCorrect,
+          badge: rank === 1 ? 'Champion' : rank === 2 ? 'Runner-up' : 'Contender',
+          isUser: true,
+        });
+      } else {
+        const strongBias = Math.max(0, Math.min(TOTAL_QUIZ_QUESTIONS, 7 - rank));
+        rows.push({
+          rank,
+          name: shuffled[rows.length % shuffled.length],
+          correct: strongBias,
+          badge: rank <= 3 ? 'Pro' : 'Racer',
+          isUser: false,
+        });
+      }
+    }
+
+    return rows;
+  }, [totalCorrectCount, userLeaderboardRank]);
+
+  if (showWorldMap) {
+    return (
+      <WorldMap
+        onGameStart={handleStartFromMap}
+      />
+    );
+  }
 
   return (
     <div
@@ -875,11 +1154,11 @@ export default function Home() {
         />
       </Canvas>
 
-      <div className="pointer-events-none absolute left-0 right-0 top-0 z-30">
-        <div className="w-full bg-black/65 px-3 pb-2 pt-2 backdrop-blur-md">
-          <div className="mb-2 flex items-center justify-between text-xs font-bold uppercase tracking-widest text-slate-200">
-          <span>Energy</span>
-          <span>{Math.ceil(energy)}%</span>
+      <div className="pointer-events-none absolute left-0 right-0 top-0 z-30 px-2 pt-[max(0.4rem,env(safe-area-inset-top))]">
+        <div className="mx-auto w-full max-w-3xl rounded-xl border border-white/10 bg-black/65 px-3 pb-2 pt-2 shadow-lg backdrop-blur-md">
+          <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-slate-200 sm:text-xs">
+            <span>Energy</span>
+            <span>{Math.ceil(energy)}%</span>
           </div>
           <div className="h-3 w-full overflow-hidden rounded-none bg-slate-700/80">
             <div
@@ -887,10 +1166,10 @@ export default function Home() {
               style={{ width: `${Math.max(0, Math.min(100, energy))}%` }}
             />
           </div>
-          <div className="mt-2 flex items-center justify-between text-sm font-semibold text-white">
-            <span>Score: {score}</span>
-            <span>Distance: {Math.floor(distance)} m</span>
-            <span>
+          <div className="mt-2 grid grid-cols-3 gap-2 text-center text-[11px] font-semibold text-white sm:text-sm">
+            <span className="truncate">Score: {score}</span>
+            <span className="truncate">Distance: {Math.floor(distance)} m</span>
+            <span className="truncate">
               {ENABLE_QUIZ
                 ? quizCompletedCount < requiredQuizCount
                   ? `Checkpoint ${quizCompletedCount + 1}/${requiredQuizCount}`
@@ -898,12 +1177,25 @@ export default function Home() {
                 : 'Run Mode'}
             </span>
           </div>
+          {selectedStage?.name && (
+            <p className="mt-1 text-center text-[10px] font-semibold uppercase tracking-wide text-cyan-300 sm:text-xs">
+              Stage: {selectedStage.name}
+            </p>
+          )}
         </div>
       </div>
 
+      <button
+        type="button"
+        onClick={() => setShowWorldMap(true)}
+        className="absolute left-3 top-[max(0.5rem,env(safe-area-inset-top))] z-40 rounded-lg border border-slate-400/50 bg-slate-900/80 px-3 py-1.5 text-xs font-bold tracking-wide text-slate-100 backdrop-blur-sm hover:border-cyan-400/70 hover:text-cyan-200"
+      >
+        World Map
+      </button>
+
       {isBlocked && !isQuizOpen && !isGameOver && !hasFinished && (
-        <div className="pointer-events-none absolute inset-x-0 top-18 z-30 flex justify-center">
-          <div className="rounded-full border border-amber-300/60 bg-amber-900/80 px-4 py-2 text-xs font-bold text-amber-100 backdrop-blur-sm">
+        <div className="pointer-events-none absolute inset-x-0 top-[4.6rem] z-30 flex justify-center px-2">
+          <div className="max-w-md rounded-full border border-amber-300/60 bg-amber-900/80 px-4 py-2 text-center text-xs font-bold text-amber-100 backdrop-blur-sm">
             Obstacle in lane - swipe to side lane to continue
           </div>
         </div>
@@ -911,9 +1203,40 @@ export default function Home() {
 
       {hasFinished && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 p-4">
-          <div className="w-full max-w-sm rounded-2xl bg-slate-900 p-6 text-center text-white shadow-2xl">
-            <h2 className="text-3xl font-black">School Entry Reached</h2>
-            <p className="mt-2 text-slate-300">Awesome! You completed all required quiz checkpoints.</p>
+          <div className="w-full max-w-2xl rounded-2xl border border-white/15 bg-linear-to-br from-slate-900 to-slate-800 p-6 text-white shadow-2xl">
+            <h2 className="text-3xl font-black text-center">Success! School Entry Reached</h2>
+            <p className="mt-2 text-center text-slate-300">
+              Final Quiz Score: {Math.min(TOTAL_QUIZ_QUESTIONS, totalCorrectCount)}/{TOTAL_QUIZ_QUESTIONS}
+            </p>
+            <p className="mt-1 text-center text-amber-300 font-semibold">You finished at Rank #{userLeaderboardRank}</p>
+
+            <div className="mt-5 rounded-xl border border-white/10 bg-black/25 p-4">
+              <h3 className="text-lg font-extrabold tracking-wide text-center text-cyan-300">Leaderboard</h3>
+              <div className="mt-3 space-y-2">
+                {leaderboardRows.map((row) => (
+                  <div
+                    key={`${row.rank}-${row.name}`}
+                    className={`flex items-center justify-between rounded-lg px-3 py-2 ${
+                      row.isUser
+                        ? 'bg-emerald-500/20 border border-emerald-300/40'
+                        : 'bg-slate-700/40 border border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-8 text-center font-black text-amber-300">#{row.rank}</span>
+                      <span className={`font-bold ${row.isUser ? 'text-emerald-200' : 'text-slate-100'}`}>
+                        {row.name}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-bold text-slate-100">{row.correct}/{TOTAL_QUIZ_QUESTIONS}</div>
+                      <div className="text-[10px] uppercase tracking-wide text-slate-300">{row.badge}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <button
               type="button"
               onClick={restartGame}
@@ -929,27 +1252,10 @@ export default function Home() {
       {ENABLE_QUIZ && isQuizOpen && !isGameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/75 p-4">
           <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-white p-6 shadow-2xl">
-            <p className="text-center text-xs font-bold uppercase tracking-[0.2em] text-sky-600">Quiz Pause</p>
             <h2 className="mt-3 text-center text-2xl font-black text-slate-900">{activeQuestion.question}</h2>
             <p className="mt-2 text-center text-sm text-slate-600">
-              Question {Math.min(quizIndex + 1, 3)} of 3
+              Question {Math.min(quizIndex + 1, QUIZ_QUESTIONS_PER_CHECKPOINT)} of {QUIZ_QUESTIONS_PER_CHECKPOINT}
             </p>
-
-            {showConfetti && (
-              <div key={confettiKey} className="pointer-events-none absolute inset-0 overflow-hidden">
-                {Array.from({ length: 24 }).map((_, i) => (
-                  <span
-                    key={i}
-                    className="quiz-confetti"
-                    style={{
-                      left: `${(i * 37) % 100}%`,
-                      animationDelay: `${(i % 6) * 0.05}s`,
-                      backgroundColor: ['#22c55e', '#f43f5e', '#3b82f6', '#facc15'][i % 4],
-                    }}
-                  />
-                ))}
-              </div>
-            )}
 
             <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
               {activeQuestion.options.map((opt) => (
@@ -960,13 +1266,9 @@ export default function Home() {
                   disabled={quizAnswered}
                   className={`rounded-xl border px-4 py-3 text-left text-base font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-100 ${
                     quizAnswered
-                      ? opt === selectedAnswer && quizWasCorrect
-                        ? 'border-emerald-400 bg-emerald-100 text-emerald-900'
-                        : opt === selectedAnswer && !quizWasCorrect
-                          ? 'border-rose-400 bg-rose-100 text-rose-900'
-                          : !quizWasCorrect && opt === activeQuestion.correctAnswer
-                            ? 'border-emerald-400 bg-emerald-100 text-emerald-900'
-                            : 'border-slate-200 bg-slate-50 text-slate-500'
+                      ? opt === selectedAnswer
+                        ? 'border-sky-400 bg-sky-100 text-sky-900'
+                        : 'border-slate-200 bg-slate-50 text-slate-500'
                       : 'border-slate-200 bg-slate-50 text-slate-900 hover:bg-slate-100'
                   }`}
                 >
@@ -976,43 +1278,34 @@ export default function Home() {
             </div>
 
             {quizAnswered && (
-              <div className="mt-4 space-y-3">
-                <p className={`text-sm font-semibold ${quizWasCorrect ? 'text-emerald-700' : 'text-rose-700'}`}>
-                  {quizFeedback}
-                </p>
-                <p className="text-xs font-medium text-slate-500">
-                  {quizWasCorrect ? 'Nice! Moving to next question...' : 'Moving to next question automatically...'}
-                </p>
+              <div className="mt-4 text-center">
+                <p className="text-xs font-medium text-slate-500">Loading next question...</p>
               </div>
             )}
           </div>
         </div>
       )}
 
-      <style jsx global>{`
-        .quiz-confetti {
-          position: absolute;
-          top: -10px;
-          width: 8px;
-          height: 14px;
-          border-radius: 2px;
-          animation: confetti-fall 1s ease-out forwards;
-        }
+      {isBootLoading && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-6">
+          <div className="w-full max-w-md rounded-2xl border border-white/15 bg-slate-900/95 p-6 text-white shadow-2xl">
+            <p className="text-center text-xs font-bold uppercase tracking-[0.2em] text-sky-300">RizzRunner</p>
+            <h2 className="mt-2 text-center text-2xl font-black">Preparing Game</h2>
+            <p className="mt-2 text-center text-sm text-slate-300">{bootMessage}</p>
+            <p className="mt-1 text-center text-xs text-slate-400">
+              Question source: {questionSource === 'db' ? 'Database (public.game)' : 'Fallback local set'}
+            </p>
+            <div className="mt-5 h-3 w-full overflow-hidden rounded-full bg-slate-700">
+              <div
+                className="h-full rounded-full bg-linear-to-r from-cyan-400 via-emerald-400 to-lime-300 transition-all duration-300"
+                style={{ width: `${bootProgress}%` }}
+              />
+            </div>
+            <p className="mt-2 text-center text-xs font-semibold text-slate-200">{bootProgress}%</p>
+          </div>
+        </div>
+      )}
 
-        @keyframes confetti-fall {
-          0% {
-            transform: translateY(-10px) rotate(0deg);
-            opacity: 0;
-          }
-          12% {
-            opacity: 1;
-          }
-          100% {
-            transform: translateY(260px) rotate(540deg);
-            opacity: 0;
-          }
-        }
-      `}</style>
     </div>
   );
 }
