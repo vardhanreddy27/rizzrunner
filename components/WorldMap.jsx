@@ -93,12 +93,13 @@ export default function WorldMap({ onGameStart }) {
 
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(15,118,110,0.28),rgba(2,6,23,0.9)_72%)]" />
 
-      <div className="relative flex h-full w-full items-center justify-center px-2">
+      <div className="relative flex h-full w-full items-center justify-center">
         <div
-          className="relative h-full max-h-screen overflow-hidden rounded-none"
+          className="relative overflow-hidden rounded-none"
           style={{
             aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}`,
-            width: `min(100vw, calc(100vh * ${MAP_WIDTH} / ${MAP_HEIGHT}))`,
+            width: `min(100vw, calc(100dvh * ${MAP_WIDTH} / ${MAP_HEIGHT}))`,
+            height: `min(100dvh, calc(100vw * ${MAP_HEIGHT} / ${MAP_WIDTH}))`,
           }}
         >
           <Image
@@ -107,7 +108,7 @@ export default function WorldMap({ onGameStart }) {
             fill
             priority
             sizes="(max-width: 768px) 100vw, 46vw"
-            className="object-cover"
+            className="object-contain"
           />
 
           <div className="absolute inset-0">
