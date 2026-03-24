@@ -39,7 +39,7 @@ function StageHotspot({ stage, index, ready, onPress }) {
         }}
         aria-label={stage.name}
       >
-        {stage.unlocked && (
+        {stage.unlocked && stage.id !== 1 && (
           <span
             className="pointer-events-none absolute inset-0 rounded-full"
             style={{
