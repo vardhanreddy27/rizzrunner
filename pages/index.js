@@ -744,7 +744,7 @@ export default function Home() {
         const res = await fetch('/api/game-questions');
         if (!res.ok) return { questions: FALLBACK_QUESTION_BANK, source: 'fallback' };
         const payload = await res.json();
-        if (!payload?.questions || payload.questions.length < QUIZ_QUESTIONS_PER_CHECKPOINT) {
+        if (!payload?.questions || payload.questions.length === 0) {
           return { questions: FALLBACK_QUESTION_BANK, source: 'fallback' };
         }
         return {
